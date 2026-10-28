@@ -10,7 +10,8 @@
   it cannot send a garbled login to the DLS account.
 - The API only answers HA Core and the Supervisor; other add-ons get 403.
 - The `log_level` option now works.
-- Runs with Docker's init, so Chromium's exited child processes are reaped.
+- Runs with the default Docker init again (`init: false` removed), so
+  Chromium's exited child processes are reaped.
 
 ## 0.2.4
 
