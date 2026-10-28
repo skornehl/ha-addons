@@ -12,9 +12,9 @@ url: "https://github.com/skornehl/ha-addons/tree/main/dls_mein_essen_bridge"
 arch:
   - amd64
   - aarch64
-# Docker's init (tini) reaps the Chromium child processes Playwright leaves
-# behind; without it python is PID 1 and they pile up as zombies.
-init: true
+# No `init: false`: the default Docker init (tini) reaps the Chromium child
+# processes Playwright leaves behind; otherwise python is PID 1 and they pile
+# up as zombies.
 ports:
   # Off by default: the integration reaches the bridge over the internal
   # add-on network, and the API has no authentication of its own.
