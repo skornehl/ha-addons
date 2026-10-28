@@ -1,5 +1,5 @@
 name: "Kleinanzeigen Bridge"
-version: "0.1.2"
+version: "0.1.3"
 slug: "kleinanzeigen_bridge"
 description: >-
   Runs kleinanzeigen-bot (real Chromium) to list your own kleinanzeigen.de
@@ -15,12 +15,12 @@ ingress: true
 panel_icon: "mdi:tag-arrow-up"
 panel_title: "Kleinanzeigen"
 options:
-  username: ""
-  password: ""
   min_days_between_republish: 7
   list_refresh_hours: 12
 schema:
-  username: email
-  password: password
+  # Optional, so the add-on starts unconfigured (it warns in the log and
+  # keeps serving /health and the panel).
+  username: email?
+  password: password?
   min_days_between_republish: int(0,60)
   list_refresh_hours: int(0,168)

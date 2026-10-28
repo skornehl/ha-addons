@@ -32,7 +32,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 import uvicorn
 
@@ -54,6 +55,12 @@ IDLE_VIEWPORT = {"width": 64, "height": 64}
 # Wait 1, 2, 4, 8, 16, then 30 minutes between failed login attempts.
 LOGIN_BACKOFF_BASE_S = 60
 LOGIN_BACKOFF_MAX_S = 30 * 60
+
+# Requests from these addresses only: HA Core (the integration) and the
+# Supervisor. The API has no authentication of its own, so every other
+# add-on on the hassio network could otherwise read the meal plan of the
+# logged-in account.
+ALLOWED_PEERS = {"172.30.32.1", "172.30.32.2", "127.0.0.1"}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 _LOGGER = logging.getLogger("dls_bridge")
@@ -83,6 +90,10 @@ class Bridge:
 
     async def start(self) -> None:
         self._playwright = await async_playwright().start()
+        await self._open_browser()
+        asyncio.create_task(self._watchdog())
+
+    async def _open_browser(self) -> None:
         self._browser = await self._playwright.chromium.launch(headless=True)
         self._context = await self._browser.new_context(
             viewport=LOGIN_VIEWPORT,
@@ -91,7 +102,23 @@ class Bridge:
         )
         self.page = await self._context.new_page()
         await self.page.add_init_script(WAMP_HOOK_JS)
-        asyncio.create_task(self._watchdog())
+
+    async def _restart_browser(self) -> None:
+        """A crashed renderer or browser ("Target closed") leaves self.page
+        unusable for good - every evaluate() and every login() on it throws
+        again. Throw the whole browser away and start a fresh one."""
+        async with self._lock:
+            self.ready = False
+            self.page = None
+            try:
+                if self._browser is not None:
+                    await self._browser.close()
+            except Exception:
+                _LOGGER.debug("Closing the old browser failed", exc_info=True)
+            self._browser = None
+            self._context = None
+            await self._open_browser()
+        _LOGGER.warning("Browser restarted after the page stopped responding")
 
     async def _watchdog(self) -> None:
         """Keeps us logged in - checks the WS session periodically and
@@ -107,7 +134,14 @@ class Bridge:
                     # progress - don't queue a second full login behind it.
                     await asyncio.sleep(30)
                     continue
-                ready = await self.page.evaluate("() => window.__wampReady === true")
+                try:
+                    ready = await self.page.evaluate("() => window.__wampReady === true")
+                except Exception:
+                    # The page itself is dead, not just the session.
+                    self.ready = False
+                    _LOGGER.exception("Page does not respond, restarting the browser")
+                    await self._restart_browser()
+                    ready = False
                 # Report the real state: a dropped session must turn
                 # /health and call() to "not logged in" (503), not keep
                 # claiming ready until the re-login finishes.
@@ -263,6 +297,11 @@ class Bridge:
         # whether this attempt ultimately succeeds.
         await self._debug_screenshot(page, "form_debug")
 
+        # Set once the semantic path has put anything into the form. From
+        # then on the coordinate fallback must not run: it would type into
+        # fields that are already filled (a click does not clear them) and
+        # send a garbled login to the real account.
+        form_touched = False
         try:
             # Confirmed via debug screenshots: this IS one combined
             # "Benutzer hinzufügen" dialog (Kundennummer + Passwort/Pin +
@@ -276,6 +315,7 @@ class Bridge:
                 "textbox", name=re.compile("Kundennummer|Customer number", re.I)
             )
             await number_field.fill(self.customer_number)
+            form_touched = True
             await self._debug_screenshot(page, "step3_after_number_typed")
             entered_number = await number_field.input_value()
             _LOGGER.info(
@@ -331,15 +371,26 @@ class Bridge:
             _LOGGER.info("Filled login form via semantic selectors")
             return True
         except Exception as err:
+            if form_touched:
+                _LOGGER.warning(
+                    "Semantic selectors failed after filling the form (%s) - not "
+                    "trying the coordinate fallback, the next cycle retries",
+                    err,
+                )
+                return False
             _LOGGER.warning("Semantic selectors failed (%s), trying coordinate fallback", err)
 
         try:
             # Calibrated against the real "Benutzer hinzufügen" dialog on
             # a 1280x900 viewport (see debug screenshots) - Kundennummer,
             # then Passwort/Pin directly below it, then the LOGIN button.
+            # Select-all before typing, so leftovers in a field are replaced
+            # instead of appended to.
             await page.mouse.click(628, 401)
+            await page.keyboard.press("Control+A")
             await page.keyboard.type(self.customer_number, delay=30)
             await page.mouse.click(628, 441)
+            await page.keyboard.press("Control+A")
             await page.keyboard.type(self.password, delay=30)
             await page.mouse.click(828, 569)
             _LOGGER.info("Filled login form via coordinate fallback")
@@ -411,10 +462,21 @@ bridge: Bridge | None = None
 app = FastAPI(title="DLS Mein Essen Bridge")
 
 
+@app.middleware("http")
+async def peer_filter(request: Request, call_next):
+    peer = request.client.host if request.client else ""
+    if peer not in ALLOWED_PEERS:
+        _LOGGER.warning("Rejected %s %s from %s", request.method, request.url.path, peer)
+        return JSONResponse({"detail": "Forbidden"}, status_code=403)
+    return await call_next(request)
+
+
 @app.on_event("startup")
 async def on_startup() -> None:
     global bridge
     options = load_options()
+    level = str(options.get("log_level", "info")).upper()
+    logging.getLogger().setLevel(getattr(logging, level, logging.INFO))
     bridge = Bridge(options["customer_number"], options["password"])
     await bridge.start()
     try:

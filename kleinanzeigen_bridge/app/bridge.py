@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import codecs
+import html
 from datetime import datetime, timedelta, timezone
 import json
 import logging
@@ -43,7 +44,9 @@ PROFILE_DIR = WORK_DIR / "browser-profile"
 BOT_BINARY = "/opt/kleinanzeigen-bot"
 VNC_URL = "http://127.0.0.1:6080"
 PORT = 8099
-VERSION = "0.1.2"
+# Set by the Dockerfile from the add-on version (config.yaml), so there is
+# only one place to bump.
+VERSION = os.environ.get("BRIDGE_VERSION", "dev")
 
 ARCHIVE_KEEP = 5
 JOB_TIMEOUT_S = 30 * 60
@@ -358,18 +361,31 @@ class Bridge:
 
         local = self._local_ads()
         checked = [self._verify_copy(ad_id, local) for ad_id in ids]
+        # Remember which file holds which ad: the bot rewrites `id` in that
+        # same file after a successful publication.
+        files = {ad_id: local[ad_id][0] for ad_id in ids}
         self._log("Kopie vollständig: " + "; ".join(checked))
 
         rc, _ = await self.run_bot("Neu einstellen", "publish", f"--ads={','.join(ids)}")
 
         # The bot rewrites `id` in the local file after a successful
         # publication - that is the reliable signal which ads made it.
+        # Matched by file, not by title: titles can repeat, and the `list`
+        # output may spell them differently from the downloaded YAML.
         now = utcnow().isoformat()
-        after = {str(data.get("title")): str(data.get("id")) for _, data in self._local_ads().values()}
         done, failed = [], []
         for old_id in ids:
             title = titles[old_id]
-            new_id = after.get(title)
+            try:
+                data = yaml.safe_load(files[old_id].read_text()) or {}
+            except (OSError, yaml.YAMLError):
+                data = None
+            if data is None:
+                # File gone or unreadable: fall back to the title, but only
+                # when it is unique among the downloaded copies.
+                same = [d for _, d in self._local_ads().values() if str(d.get("title")) == title]
+                data = same[0] if len(same) == 1 else {}
+            new_id = str(data["id"]) if data.get("id") is not None else None
             if new_id and new_id != old_id:
                 self.state["republished"][title] = {"at": now, "old_id": old_id, "new_id": new_id}
                 self.state["history"].append(now)
@@ -465,8 +481,8 @@ def build_app(bridge: Bridge) -> web.Application:
         ws_path = f"{prefix}/vnc/websockify" if prefix else "vnc/websockify"
         job = bridge.job
         html = INDEX_HTML.format(
-            status=job.get("status", "idle"),
-            message=job.get("message", ""),
+            status=html.escape(str(job.get("status", "idle"))),
+            message=html.escape(str(job.get("message", ""))),
             ws_path=ws_path,
         )
         return web.Response(text=html, content_type="text/html")

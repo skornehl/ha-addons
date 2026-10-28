@@ -1,5 +1,5 @@
 name: "DLS Mein Essen Bridge"
-version: "0.2.4"
+version: "0.2.5"
 slug: "dls_mein_essen_bridge"
 description: >-
   Runs a real (headless) browser logged into the DLS "Mein Essen" portal and
@@ -12,7 +12,9 @@ url: "https://github.com/skornehl/ha-addons/tree/main/dls_mein_essen_bridge"
 arch:
   - amd64
   - aarch64
-init: false
+# Docker's init (tini) reaps the Chromium child processes Playwright leaves
+# behind; without it python is PID 1 and they pile up as zombies.
+init: true
 ports:
   # Off by default: the integration reaches the bridge over the internal
   # add-on network, and the API has no authentication of its own.
