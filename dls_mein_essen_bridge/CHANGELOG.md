@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.6
+
+- Login works again: the DLS portal's Flutter app no longer accepts a value
+  written straight into the input field, so the password field stayed empty
+  and every login ended in "Login timed out waiting for WAMP WELCOME". The
+  bridge now clicks each field and types the customer number and password
+  as real key events.
+
 ## 0.2.5
 
 - Recover from a crashed browser: when the page stops responding, the

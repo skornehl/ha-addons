@@ -311,10 +311,18 @@ class Bridge:
             # .type() to .fill() - sets the value directly instead of
             # simulating individual keystrokes, ruling out any per-
             # character timing/event race as the cause.
+            #
+            # Back to typing since 09.11.2026: the portal's Flutter app no
+            # longer takes a value that .fill() writes straight into the
+            # DOM input. input_value() still read back the full password,
+            # but Flutter's own text state stayed empty, so LOGIN only
+            # showed "Bitte geben Sie ein Passwort / Pin ... ein" and the
+            # WAMP session never started. Real key events go through
+            # Flutter's text-editing path (see _type_into).
             number_field = page.get_by_role(
                 "textbox", name=re.compile("Kundennummer|Customer number", re.I)
             )
-            await number_field.fill(self.customer_number)
+            await self._type_into(page, number_field, self.customer_number)
             form_touched = True
             await self._debug_screenshot(page, "step3_after_number_typed")
             entered_number = await number_field.input_value()
@@ -337,7 +345,7 @@ class Bridge:
             # Kundennummer (first) and Passwort/Pin (second), in that
             # order - deterministic regardless of focus timing.
             password_field = page.get_by_role("textbox").nth(1)
-            await password_field.fill(self.password)
+            await self._type_into(page, password_field, self.password)
             entered_password = await password_field.input_value()
             if entered_password != self.password:
                 _LOGGER.warning(
@@ -348,7 +356,7 @@ class Bridge:
                 )
                 await page.keyboard.press("Tab")
                 password_field = page.locator(":focus")
-                await password_field.fill(self.password)
+                await self._type_into(page, password_field, self.password)
                 entered_password = await password_field.input_value()
             await self._debug_screenshot(page, "step4_after_password_typed")
             _LOGGER.info(
@@ -398,6 +406,17 @@ class Bridge:
         except Exception:
             _LOGGER.exception("Coordinate fallback also failed")
             return False
+
+    @staticmethod
+    async def _type_into(page: Page, field, text: str) -> None:
+        """Click the field, give Flutter a moment to attach its editing
+        state to it, select whatever is in it (so a retry replaces instead
+        of appending) and type the text as real key events."""
+        await field.click()
+        await page.wait_for_timeout(800)
+        await page.keyboard.press("Control+A")
+        await page.keyboard.type(text, delay=40)
+        await page.wait_for_timeout(500)
 
     async def _click_text_or_coords(
         self, page: Page, pattern: str, coords: tuple[int, int], description: str
