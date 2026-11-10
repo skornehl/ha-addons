@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.7
+
+- The add-on now has an icon and a logo, so the add-on store and the add-on
+  page show it like the Kleinanzeigen bridge. Same image as the integration.
+
 ## 0.2.6
 
 - Login works again: the DLS portal's Flutter app no longer accepts a value
