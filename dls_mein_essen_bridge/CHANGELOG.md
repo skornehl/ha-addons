@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.8
+
+- Much lower CPU use while idle: after the login, the portal's Flutter app
+  kept drawing new frames around the clock, and Chromium's software GPU
+  process used 80-100% of a CPU core despite the tiny viewport. The bridge
+  now lets the page draw only about one frame every 5 seconds once logged
+  in, and restores normal drawing before every login attempt. Meal plan
+  requests are not affected.
+
 ## 0.2.7
 
 - The add-on now has an icon and a logo, so the add-on store and the add-on

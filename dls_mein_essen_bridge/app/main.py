@@ -52,6 +52,55 @@ LOGIN_VIEWPORT = {"width": 1280, "height": 900}
 # JS/WebSocket side. login() restores LOGIN_VIEWPORT before every attempt.
 IDLE_VIEWPORT = {"width": 64, "height": 64}
 
+# The tiny viewport alone is no longer enough: measured on 13.11.2026, the
+# gpu-process sat at 80-100% of a core again, because the Flutter app keeps
+# requesting a new frame via requestAnimationFrame around the clock. After
+# login, rAF is replaced by a version that hands each callback to the real
+# rAF only after ~5 s, i.e. ~0.2 frames per second. This cannot touch the
+# WAMP traffic: the app's WAMP client runs on WebSocket message events and
+# Dart futures (microtasks), and wamp_hook.js only uses a WebSocket
+# listener, ws.send() and setInterval polling in __wampCall - none of that
+# goes through rAF. The original is kept in window.__origRAF (saved only
+# once) and put back before every login attempt (RESTORE_RAF_JS), because
+# the login needs normal rendering for its clicks and form fields.
+IDLE_FRAME_DELAY_MS = 5000
+THROTTLE_RAF_JS = """(delay) => {
+  if (!window.__origRAF) {
+    window.__origRAF = window.requestAnimationFrame;
+    window.__origCAF = window.cancelAnimationFrame;
+  }
+  const raf = window.__origRAF;
+  const caf = window.__origCAF;
+  const pending = new Map();
+  let nextId = 1;
+  window.requestAnimationFrame = function (cb) {
+    const id = nextId++;
+    const entry = {};
+    entry.timer = setTimeout(function () {
+      entry.timer = null;
+      entry.raf = raf.call(window, function (ts) {
+        pending.delete(id);
+        cb(ts);
+      });
+    }, delay);
+    pending.set(id, entry);
+    return id;
+  };
+  window.cancelAnimationFrame = function (id) {
+    const entry = pending.get(id);
+    if (!entry) return;
+    pending.delete(id);
+    if (entry.timer !== null) clearTimeout(entry.timer);
+    if (entry.raf !== undefined) caf.call(window, entry.raf);
+  };
+}"""
+RESTORE_RAF_JS = """() => {
+  if (window.__origRAF) {
+    window.requestAnimationFrame = window.__origRAF;
+    window.cancelAnimationFrame = window.__origCAF;
+  }
+}"""
+
 # Wait 1, 2, 4, 8, 16, then 30 minutes between failed login attempts.
 LOGIN_BACKOFF_BASE_S = 60
 LOGIN_BACKOFF_MAX_S = 30 * 60
@@ -205,6 +254,10 @@ class Bridge:
             # content). Clearing storage before every attempt keeps every
             # retry on the one flow this is actually built for.
             await page.set_viewport_size(LOGIN_VIEWPORT)
+            try:
+                await page.evaluate(RESTORE_RAF_JS)
+            except Exception:
+                _LOGGER.exception("Could not restore requestAnimationFrame before login")
             await self._context.clear_cookies()
             _LOGGER.info("Navigating to login page")
             await page.goto(LOGIN_URL, wait_until="networkidle")
@@ -232,6 +285,10 @@ class Bridge:
                         await page.set_viewport_size(IDLE_VIEWPORT)
                     except Exception:
                         _LOGGER.exception("Could not shrink viewport after login")
+                    try:
+                        await page.evaluate(THROTTLE_RAF_JS, IDLE_FRAME_DELAY_MS)
+                    except Exception:
+                        _LOGGER.exception("Could not throttle requestAnimationFrame after login")
                     return True
                 error = await page.evaluate("() => window.__wampLastError")
                 if error:
