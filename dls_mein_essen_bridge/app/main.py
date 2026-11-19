@@ -401,8 +401,29 @@ class Bridge:
             # debug screenshots this dialog's only two textboxes are
             # Kundennummer (first) and Passwort/Pin (second), in that
             # order - deterministic regardless of focus timing.
-            password_field = page.get_by_role("textbox").nth(1)
+            # Since 19.11.2026 the second textbox in DOM order is no longer
+            # the password input: the password ended up in the Kundennummer
+            # field (Ctrl+A replaced the number), the real password field
+            # stayed empty, and the read-back below still said "match"
+            # because it read the same locator it had just typed into.
+            # Prefer the real <input type=password>, never accept the
+            # number field itself, and check the number afterwards.
+            password_field = await self._find_password_field(page, number_field)
             await self._type_into(page, password_field, self.password)
+            number_after = await number_field.input_value()
+            if number_after != self.customer_number:
+                # The password went into the Kundennummer field (or
+                # overwrote it). Never send that login: it would put the
+                # password on screen and into the account's failed logins.
+                _LOGGER.error(
+                    "Kundennummer field changed while typing the password "
+                    "(length now %d, expected %d) - aborting this attempt",
+                    len(number_after),
+                    len(self.customer_number),
+                )
+                # Clear the field again so no screenshot shows the password.
+                await self._type_into(page, number_field, self.customer_number)
+                raise RuntimeError("Password landed in the Kundennummer field")
             entered_password = await password_field.input_value()
             if entered_password != self.password:
                 _LOGGER.warning(
@@ -463,6 +484,29 @@ class Bridge:
         except Exception:
             _LOGGER.exception("Coordinate fallback also failed")
             return False
+
+    @staticmethod
+    async def _find_password_field(page: Page, number_field):
+        """Locate the Passwort/Pin input, never the Kundennummer input.
+
+        Order: a visible <input type=password>, then any visible textbox
+        that is not the number field. Raises if nothing distinct is found,
+        so LOGIN is never clicked with the password in the wrong field."""
+        number_handle = await number_field.element_handle()
+        candidates = [page.locator("input[type=password]"), page.get_by_role("textbox")]
+        for group in candidates:
+            for i in range(await group.count()):
+                field = group.nth(i)
+                try:
+                    if not await field.is_visible():
+                        continue
+                    handle = await field.element_handle()
+                    same = await page.evaluate("([a, b]) => a === b", [handle, number_handle])
+                except Exception:
+                    continue
+                if not same:
+                    return field
+        raise RuntimeError("No password field distinct from the Kundennummer field")
 
     @staticmethod
     async def _type_into(page: Page, field, text: str) -> None:
