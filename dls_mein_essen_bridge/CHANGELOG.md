@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.9
+
+- Fix login: since 19.11.2026 the bridge typed the password into the
+  Kundennummer field, so the portal saw an empty password and every login
+  timed out ("waiting for WAMP WELCOME"). The password field is now found
+  as the real password input (never the Kundennummer field), and the login
+  is aborted, before any screenshot, if the Kundennummer field changed
+  while typing the password.
+
 ## 0.2.8
 
 - Much lower CPU use while idle: after the login, the portal's Flutter app
