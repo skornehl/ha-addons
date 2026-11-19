@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.10
+
+- Fix the 0.2.9 login: the password field is now kept as the element itself
+  instead of a positional locator. Flutter re-creates its inputs while
+  typing, so the locator no longer matched and reading the field back
+  timed out after 30 s, although the form was filled correctly.
+
 ## 0.2.9
 
 - Fix login: since 19.11.2026 the bridge typed the password into the

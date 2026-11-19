@@ -505,7 +505,11 @@ class Bridge:
                 except Exception:
                     continue
                 if not same:
-                    return field
+                    # Return the element itself, not group.nth(i): Flutter
+                    # re-creates its hidden inputs while typing, so the
+                    # positional locator no longer resolves afterwards
+                    # (input_value() then timed out after 30 s, 19.11.2026).
+                    return handle
         raise RuntimeError("No password field distinct from the Kundennummer field")
 
     @staticmethod
