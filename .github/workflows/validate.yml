@@ -23,3 +23,29 @@ jobs:
         uses: frenck/action-addon-linter@v2
         with:
           path: "./${{ matrix.addon }}"
+
+  base-image:
+    name: Pinned base images still exist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check every digest-pinned ghcr.io FROM for amd64 and arm64
+        run: |
+          set -euo pipefail
+          accept="application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json"
+          failed=0
+          for f in */Dockerfile; do
+            ref=$(sed -n 's/^FROM ghcr\.io\/\(.*@sha256:[0-9a-f]*\).*/\1/p' "$f")
+            [ -z "$ref" ] && continue
+            repo=${ref%@*}; digest=${ref#*@}
+            token=$(curl -fsS "https://ghcr.io/token?scope=repository:${repo}:pull" | jq -r .token)
+            get() { curl -fsS -H "Authorization: Bearer $token" -H "Accept: $accept" "https://ghcr.io/v2/${repo}/manifests/$1"; }
+            echo "== $f: ghcr.io/$ref"
+            index=$(get "$digest") || { echo "::error file=$f::ghcr.io/$ref does not exist any more"; failed=1; continue; }
+            for arch in amd64 arm64; do
+              child=$(echo "$index" | jq -r --arg a "$arch" '.manifests[]? | select(.platform.architecture == $a) | .digest' | head -1)
+              if [ -z "$child" ]; then echo "::error file=$f::no $arch image in ghcr.io/$ref"; failed=1; continue; fi
+              if get "$child" > /dev/null; then echo "$arch: $child ok"; else echo "::error file=$f::$arch image $child of ghcr.io/$ref is missing upstream"; failed=1; fi
+            done
+          done
+          exit $failed

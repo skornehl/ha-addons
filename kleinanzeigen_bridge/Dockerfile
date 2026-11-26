@@ -1,9 +1,11 @@
 # Multi-arch manifest (amd64 + arm64): buildx picks the matching image.
 # Pinned by digest (upstream only publishes moving `latest`/`preview` tags):
 # the bridge parses the bot's CLI output, so a silent bot update on rebuild
-# could break it without any version change here. This digest is `latest`
-# as of 2026-10-28 (release of 2026-10-24); bump it deliberately.
-FROM ghcr.io/second-hand-friends/kleinanzeigen-bot@sha256:07d4032e4f35e16d03399d0035a358bb498b690f11775f1240041d3263ddca1c
+# could break it without any version change here. This digest is the
+# multi-arch index of `latest` as of 2026-11-26 (release of 2026-11-15); bump
+# it deliberately. Upstream deletes older images, so a digest can disappear:
+# the CI workflow checks daily that this one still resolves for both arches.
+FROM ghcr.io/second-hand-friends/kleinanzeigen-bot@sha256:d9ad04b88be10e64b8cabc1b065247bdccdc2697df4734e4bbe3c7dc24eae6ad
 
 # Supervisor passes the add-on version from config.yaml as BUILD_VERSION.
 ARG BUILD_VERSION
