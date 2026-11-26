@@ -1,5 +1,5 @@
 name: "Kleinanzeigen Bridge"
-version: "0.1.3"
+version: "0.1.4"
 slug: "kleinanzeigen_bridge"
 description: >-
   Runs kleinanzeigen-bot (real Chromium) to list your own kleinanzeigen.de

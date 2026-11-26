@@ -23,3 +23,22 @@ jobs:
         uses: frenck/action-addon-linter@v2
         with:
           path: "./${{ matrix.addon }}"
+
+  base-image:
+    name: Pinned base images still exist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check every digest-pinned FROM for amd64 and arm64
+        run: |
+          set -euo pipefail
+          for f in */Dockerfile; do
+            ref=$(sed -n 's/^FROM \(.*@sha256:[0-9a-f]*\).*/\1/p' "$f")
+            [ -z "$ref" ] && continue
+            echo "== $f: $ref"
+            platforms=$(docker buildx imagetools inspect "$ref" --format '{{range .Manifest.Manifests}}{{.Platform.Architecture}} {{end}}')
+            echo "platforms: $platforms"
+            for arch in amd64 arm64; do
+              echo "$platforms" | grep -qw "$arch" || { echo "::error file=$f::$ref has no $arch image"; exit 1; }
+            done
+          done
